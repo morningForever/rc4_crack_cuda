@@ -38,23 +38,16 @@ __device__ __host__ static void swap_byte(unsigned char *a, unsigned char *b)
  *
  * \return void
 **/
-__device__ __host__ void prepare_key(unsigned char *key_data_ptr, int key_data_len,rc4_key *key) 
+__device__ __host__ void prepare_key(unsigned char *key_data_ptr, int key_data_len,unsigned char *s_box) 
 { 
-	unsigned char index1; 
-	unsigned char index2; 
-	unsigned char* state; 
+	unsigned char index1=0, index2=0, * state; 
 	short counter;    
 
-	state = &key->state[0];        
+	state = &s_box[0];        
 	for(counter = 0; counter < 256; counter++)          
-		state[counter] = counter;            
-	key->x = 0;    
-	key->y = 0;    
-	index1 = 0;    
-	index2 = 0;          
+		state[counter] = counter;   
 	for(counter = 0; counter < 256; counter++)      
-	{            
-	//	index2 = (key_data_ptr[index1] + state[counter] + index2) % 256;    
+	{             
 		index2 = (key_data_ptr[index1] + state[counter] + index2);            
 		swap_byte(&state[counter], &state[index2]);          
 
@@ -71,31 +64,37 @@ __device__ __host__ void prepare_key(unsigned char *key_data_ptr, int key_data_l
  *
  * \return void
 **/
-__device__ __host__ void rc4(unsigned char *buffer_ptr, int buffer_len, rc4_key *key) 
+__device__ unsigned char rc4_single(unsigned char*x, unsigned char * y, unsigned char *s_box) 
 {  
-	unsigned char x; 
-	unsigned char y; 
-	unsigned char* state; 
-	unsigned char xorIndex; 
+	unsigned char* state, xorIndex; 
+	short counter;    
+
+	state = &s_box[0];    
+
+	*x = (*x + 1);                
+	*y = (state[*x] + *y);            
+	swap_byte(&state[*x], &state[*y]);                  
+
+	xorIndex = (state[*x] + state[*y]);            
+
+	return  state[xorIndex];        
+} 
+
+void rc4(unsigned char *buffer_ptr, int buffer_len, unsigned char *s_box) 
+{  
+	unsigned char x=0, y=0, * state, xorIndex; 
 	short counter;          
 
-	x = key->x;    
-	y = key->y;    
 
-	state = &key->state[0];        
-	for(counter = 0; counter < buffer_len; counter ++)      
-	{            
-	//	x = (x + 1) % 256;                
-	//	y = (state[x] + y) % 256;    
+	state = &s_box[0];        
+	for(counter = 0; counter < buffer_len; counter ++)
+	{              
 		x = (x + 1);                
 		y = (state[x] + y);            
 		swap_byte(&state[x], &state[y]);                  
-
-	//	xorIndex = (state[x] + state[y]) % 256;  
+ 
 		xorIndex = (state[x] + state[y]);            
 
 		buffer_ptr[counter] ^= state[xorIndex];        
 	}            
-	key->x = x;    
-	key->y = y; 
 } 
