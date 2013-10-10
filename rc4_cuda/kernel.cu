@@ -24,6 +24,19 @@ __constant__ unsigned int memory_per_thread=MEMEORY_PER_THREAD;
 
 extern __shared__ unsigned char shared_mem[];
 
+__device__ unsigned char* generate_key(int val,unsigned char*len)
+{
+	unsigned char*res=(unsigned char*)malloc(sizeof(unsigned char)*MAX_KEY_LENGTH);
+	unsigned char p=MAX_KEY_LENGTH-1;
+	res[p]=0;
+	while (val) {
+		res[p--] = (val - 1) % keyNum + start;
+		val = (val - 1) / keyNum;
+	}
+	*len=MAX_KEY_LENGTH-1-p;
+	return res+p+1;
+}
+
 __global__ void crackRc4Kernel(const unsigned char* knownKeyStream, const int known_stream_len, unsigned char*key, volatile bool *found)
 {
 	if(*found) return;
@@ -31,9 +44,8 @@ __global__ void crackRc4Kernel(const unsigned char* knownKeyStream, const int kn
 	int bdx=blockIdx.x, tid=threadIdx.x, keyLen=0, p=0;
 	const unsigned long long keyNum_per_thread=maxNum/(BLOCK_NUM*blockDim.x)+1;
 
-	shared_mem[]
-
 	unsigned long long val=(tid+bdx*blockDim.x)*keyNum_per_thread;
+//	unsigned long long val=(tid+bdx*blockDim.x);
 	unsigned long long temp;
 	unsigned char res,x=0,y=0;
 	for (unsigned long long i=0; i<keyNum_per_thread; val++,i++)
@@ -130,7 +142,7 @@ cudaError_t crackRc4WithCuda(unsigned char* knownKeyStream, int stream_len, unsi
 
 	// Launch a kernel on the GPU with one thread for each element.
 	int threadNum=prop.sharedMemPerBlock/MEMEORY_PER_THREAD;
-	threadNum=160;
+//	threadNum=160;
 	crackRc4Kernel<<<BLOCK_NUM, threadNum, prop.sharedMemPerBlock>>>(knownKeyStream_dev, stream_len, key_dev,found_dev);
 
 	// Check for any errors launching the kernel
@@ -174,7 +186,7 @@ int main(int argc, char *argv[])
 {
 	unsigned char* s_box = (unsigned char*)malloc(sizeof(unsigned char)*256);
 	//ÃÜÔ¿
-	unsigned char encryptKey[]="!+07";
+	unsigned char encryptKey[]="!+08";
 	//Ã÷ÎÄ
 	unsigned char buffer[] = "Life is a chain of moments of enjoyment, not only about survivalO(¡É_¡É)O~";
 	int buffer_len=strlen((char*)buffer);
