@@ -24,18 +24,6 @@ __constant__ unsigned int memory_per_thread=MEMEORY_PER_THREAD;
 
 extern __shared__ unsigned char shared_mem[];
 
-__device__ unsigned char* generate_key(int val,unsigned char*len)
-{
-	unsigned char*res=(unsigned char*)malloc(sizeof(unsigned char)*MAX_KEY_LENGTH);
-	unsigned char p=MAX_KEY_LENGTH-1;
-	res[p]=0;
-	while (val) {
-		res[p--] = (val - 1) % keyNum + start;
-		val = (val - 1) / keyNum;
-	}
-	*len=MAX_KEY_LENGTH-1-p;
-	return res+p+1;
-}
 
 __global__ void crackRc4Kernel(const unsigned char* knownKeyStream, const int known_stream_len, unsigned char*key, volatile bool *found)
 {
@@ -193,11 +181,6 @@ int main(int argc, char *argv[])
 	prepare_key(encryptKey,strlen((char*)encryptKey),s_box);
 	rc4(buffer,buffer_len,s_box);
 	
-
-	/*prepare_key(encryptKey,strlen((char*)encryptKey),s_box);
-	rc4(buffer,buffer_len,s_box);
-
-	printf("%s",buffer);*/
 	unsigned char knownPlainText[]="Life";
 	int known_p_len=strlen((char*)knownPlainText);
 	unsigned char* knownKeyStream=(unsigned char*)malloc(sizeof(unsigned char)*known_p_len);
