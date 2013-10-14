@@ -7,22 +7,6 @@
 */
 /************************************************************************/
 
-//21-7E,totally 94 characters
-#define START_CHARACTER 0x21
-#define END_CHARACTER 0x7E
-#define KEY (END_CHARACTER-START_CHARACTER+1)
-
-#define MAX_KEY_LENGTH 10 //max key length
-#define BLOCK_NUM 64
-#define MEMEORY_PER_THREAD 266
-
-__constant__ unsigned long long maxNum=0xFFFFFFFFFFFFFFFF;
-__constant__ unsigned int maxKeyLen=MAX_KEY_LENGTH;
-__constant__ unsigned int keyNum=KEY;
-__constant__ unsigned int start=START_CHARACTER;
-__constant__ unsigned int memory_per_thread=MEMEORY_PER_THREAD;
-
-extern __shared__ unsigned char shared_mem[];
 
 
 __global__ void crackRc4Kernel(const unsigned char* knownKeyStream, const int known_stream_len, unsigned char*key, volatile bool *found)
@@ -30,13 +14,13 @@ __global__ void crackRc4Kernel(const unsigned char* knownKeyStream, const int kn
 	if(*found) return;
 
 	int bdx=blockIdx.x, tid=threadIdx.x, keyLen=0, p=0;
-	const unsigned long long keyNum_per_thread=maxNum/(BLOCK_NUM*blockDim.x)+1;
-
-	unsigned long long val=(tid+bdx*blockDim.x)*keyNum_per_thread;
-//	unsigned long long val=(tid+bdx*blockDim.x);
+	const unsigned long long totalThreadNum=gridDim.x*blockDim.x;
+	const unsigned long long keyNum_per_thread=maxNum/totalThreadNum;
+//	unsigned long long val=(tid+bdx*blockDim.x)*keyNum_per_thread;
+	unsigned long long val=(tid+bdx*blockDim.x);
 	unsigned long long temp;
-	unsigned char res,x=0,y=0;
-	for (unsigned long long i=0; i<keyNum_per_thread; val++,i++)
+	bool justIt=true;
+	for (unsigned long long i=0; i<=keyNum_per_thread; val+=totalThreadNum,i++)
 	{
 		if(*found) return;
 
@@ -50,25 +34,15 @@ __global__ void crackRc4Kernel(const unsigned char* knownKeyStream, const int kn
 		}
 		keyLen=maxKeyLen+memory_per_thread*tid-p-1;
 
-		if(*found) return;
-		prepare_key(&shared_mem[p+1],keyLen,&shared_mem[maxKeyLen+memory_per_thread*tid]);
-
-		if(*found) return;
-		bool justIt=true;
-		x=0,y=0;
-		for(unsigned char j=0;j<4;j++){
-			res=rc4_single(&x,&y,&shared_mem[maxKeyLen+memory_per_thread*tid]);
-			if(knownKeyStream[j]!=res){
-				justIt=false;
-				break;
-			}
-		}
-		
-		if (!justIt)
-		{
-			continue;
+		if(keyLen==4){
+			justIt=false;
 		}
 
+		if(*found) return;
+		justIt=device_isKeyRight(knownKeyStream,known_stream_len,&shared_mem[p+1],keyLen);
+		if(*found) return;
+
+		if (!justIt) continue;
 		*found=true;
 		memcpy(key,&shared_mem[p+1],keyLen);
 		key[keyLen]=0;
@@ -129,9 +103,12 @@ cudaError_t crackRc4WithCuda(unsigned char* knownKeyStream, int stream_len, unsi
 	}
 
 	// Launch a kernel on the GPU with one thread for each element.
-	int threadNum=prop.sharedMemPerBlock/MEMEORY_PER_THREAD;
-//	threadNum=160;
-	crackRc4Kernel<<<BLOCK_NUM, threadNum, prop.sharedMemPerBlock>>>(knownKeyStream_dev, stream_len, key_dev,found_dev);
+	int threadNum=floor((double)(prop.sharedMemPerBlock/MEMEORY_PER_THREAD)),share_memory=prop.sharedMemPerBlock;
+	if(threadNum>MAX_THREAD_NUM){
+		threadNum=MAX_THREAD_NUM;
+		share_memory=threadNum*MEMEORY_PER_THREAD;
+	}
+	crackRc4Kernel<<<BLOCK_NUM, threadNum, share_memory>>>(knownKeyStream_dev, stream_len, key_dev,found_dev);
 
 	// Check for any errors launching the kernel
 	cudaStatus = cudaGetLastError();
@@ -172,15 +149,16 @@ Error:
 
 int main(int argc, char *argv[])
 {
+//	printf("%c",0x7d);
 	unsigned char* s_box = (unsigned char*)malloc(sizeof(unsigned char)*256);
 	//ÃÜÔ¿
-	unsigned char encryptKey[]="!+08";
+	unsigned char encryptKey[]="~~~}";
 	//Ã÷ÎÄ
 	unsigned char buffer[] = "Life is a chain of moments of enjoyment, not only about survivalO(¡É_¡É)O~";
 	int buffer_len=strlen((char*)buffer);
 	prepare_key(encryptKey,strlen((char*)encryptKey),s_box);
-	rc4(buffer,buffer_len,s_box);
-	
+	rc4(buffer,buffer_len,s_box);	
+
 	unsigned char knownPlainText[]="Life";
 	int known_p_len=strlen((char*)knownPlainText);
 	unsigned char* knownKeyStream=(unsigned char*)malloc(sizeof(unsigned char)*known_p_len);
@@ -191,27 +169,56 @@ int main(int argc, char *argv[])
 
 	unsigned char * key=(unsigned char*)malloc( sizeof(unsigned char) * (MAX_KEY_LENGTH+1));
 
-	LARGE_INTEGER nFreq,nBeginTime,nEndTime;
-	QueryPerformanceFrequency(&nFreq);
-	QueryPerformanceCounter(&nBeginTime); 
+	cudaEvent_t start,stop;
+	cudaError_t cudaStatus=cudaEventCreate(&start);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaEventCreate(start) failed!");
+		return 1;
+	}
+	cudaStatus=cudaEventCreate(&stop);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaEventCreate(stop) failed!");
+		return 1;
+	}
+
+	cudaStatus=cudaEventRecord(start,0);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaEventRecord(start) failed!");
+		return 1;
+	}
 
 	bool found=false;
-	cudaError_t cudaStatus = crackRc4WithCuda(knownKeyStream, known_p_len , key, &found);
+	cudaStatus = crackRc4WithCuda(knownKeyStream, known_p_len , key, &found);
 	if (cudaStatus != cudaSuccess) {
 		fprintf(stderr, "addWithCuda failed!");
 		return 1;
 	}
 
-	QueryPerformanceCounter(&nEndTime);
-	float time=(float)(nEndTime.QuadPart-nBeginTime.QuadPart)/((float)nFreq.QuadPart);
-	printf("The time we used was:%fs\n",time);
+	cudaStatus=cudaEventRecord(stop,0);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaEventRecord(stop) failed!");
+		return 1;
+	}
+
+	cudaStatus=cudaEventSynchronize(stop);
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaEventSynchronize failed!");
+		return 1;
+	}
+	float useTime;
+	cudaStatus=cudaEventElapsedTime(&useTime,start,stop);
+	useTime/=1000;
+	printf("The time we used was:%fs\n",useTime);
 	if (found)
 	{
 		printf("The right key has been found.The right key is:%s\n",key);
-		prepare_key(key,strlen((char*)encryptKey),s_box);
+		prepare_key(key,strlen((char*)key),s_box);
 		rc4(buffer,buffer_len,s_box);
 		printf ("\nThe clear text is:\n%s\n",buffer);
 	}
+
+	cudaEventDestroy(start);
+	cudaEventDestroy(stop);
 
 	free(key);
 	free(knownKeyStream);
