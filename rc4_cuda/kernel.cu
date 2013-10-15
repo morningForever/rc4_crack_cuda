@@ -7,44 +7,50 @@
 */
 /************************************************************************/
 
-
+__device__ unsigned char* genKey(unsigned char*res,unsigned long long val,int*key_len)
+{
+	char p=maxKeyLen-1;
+	while (val&&p>=0) {
+		res[p--] = (val - 1) % keyNum + start;
+		val = (val - 1) / keyNum;
+	}
+	*key_len=(maxKeyLen-p-1);
+	return res+p+1;
+}
 
 __global__ void crackRc4Kernel(const unsigned char* knownKeyStream, const int known_stream_len, unsigned char*key, volatile bool *found)
 {
-	if(*found) return;
+	if(*found) asm("exit;");
 
-	int bdx=blockIdx.x, tid=threadIdx.x, keyLen=0, p=0;
+	int bdx=blockIdx.x, tid=threadIdx.x, keyLen=0;
 	const unsigned long long totalThreadNum=gridDim.x*blockDim.x;
 	const unsigned long long keyNum_per_thread=maxNum/totalThreadNum;
 //	unsigned long long val=(tid+bdx*blockDim.x)*keyNum_per_thread;
 	unsigned long long val=(tid+bdx*blockDim.x);
-	unsigned long long temp;
 	bool justIt=true;
 	for (unsigned long long i=0; i<=keyNum_per_thread; val+=totalThreadNum,i++)
 	{
-		if(*found) return;
-
+		//找到的话退出
+		if(*found) asm("exit;");
 		if(val==0) continue;
 
-		p = (maxKeyLen-1)+memory_per_thread*tid;
-		temp=val;
-		while (temp&&p>=memory_per_thread*tid) {
-			shared_mem[p--] = (temp - 1) % keyNum + start;
-			temp = (temp - 1) / keyNum;
-		}
-		keyLen=maxKeyLen+memory_per_thread*tid-p-1;
+		//vKey是share_memory的一个指针
+		unsigned char*vKey=genKey((shared_mem+memory_per_thread*tid),val,&keyLen);
 
-		if(keyLen==4){
-			justIt=false;
-		}
+		//找到的话退出
+		if(*found) asm("exit;");
 
-		if(*found) return;
-		justIt=device_isKeyRight(knownKeyStream,known_stream_len,&shared_mem[p+1],keyLen);
-		if(*found) return;
+		justIt=device_isKeyRight(knownKeyStream,known_stream_len,vKey,keyLen,found);
 
+		//找到的话退出
+		if(*found) asm("exit;");
+
+		//当前密钥不是所求
 		if (!justIt) continue;
+
+		//找到匹配密钥，写到Host，保存数据,修改found,退出程序
 		*found=true;
-		memcpy(key,&shared_mem[p+1],keyLen);
+		memcpy(key,vKey,keyLen);
 		key[keyLen]=0;
 		__threadfence();
 		asm("exit;");
@@ -152,7 +158,7 @@ int main(int argc, char *argv[])
 //	printf("%c",0x7d);
 	unsigned char* s_box = (unsigned char*)malloc(sizeof(unsigned char)*256);
 	//密钥
-	unsigned char encryptKey[]="~~~}";
+	unsigned char encryptKey[]="!!}";
 	//明文
 	unsigned char buffer[] = "Life is a chain of moments of enjoyment, not only about survivalO(∩_∩)O~";
 	int buffer_len=strlen((char*)buffer);
@@ -223,6 +229,7 @@ int main(int argc, char *argv[])
 	free(key);
 	free(knownKeyStream);
 	free(s_box);
+	cudaThreadExit();
 	return 0;
 }
 

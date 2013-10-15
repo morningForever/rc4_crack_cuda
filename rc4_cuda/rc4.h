@@ -14,10 +14,10 @@
 #define KEY (END_CHARACTER-START_CHARACTER+1)
 
 #define MAX_KEY_LENGTH 10 //max key length
-#define BLOCK_NUM 1
+#define BLOCK_NUM 2
 //空间其实只要10个就足够了，取20的原因主要是为了避免bank conflicts
 #define MEMEORY_PER_THREAD 20
-#define MAX_THREAD_NUM 512
+#define MAX_THREAD_NUM 256
 #define STATE_LEN	256
 
 __constant__ unsigned long long maxNum=0xFFFFFFFFFFFFFFFF;
@@ -50,15 +50,19 @@ __device__ __host__ static void swap_byte(unsigned char *a, unsigned char *b)
 	*b = swapByte; 
 }
 
-__device__ bool device_isKeyRight(const unsigned char *known_stream, int known_len,unsigned char *validateKey,int key_len) 
+__device__ bool device_isKeyRight(const unsigned char *known_stream, int known_len,unsigned char *validateKey,int key_len,volatile bool* found) 
 { 
 	//KSA
 	unsigned char state[STATE_LEN];
 	unsigned char index1=0, index2=0;
 	short counter=0;    
-        
+
+    if(*found) asm("exit;");   
+
 	for(counter = 0; counter < STATE_LEN; counter++)          
 		state[counter] = counter;   
+
+	if(*found) asm("exit;");
 
 	for(counter = 0; counter < STATE_LEN; counter++)      
 	{             
@@ -67,6 +71,8 @@ __device__ bool device_isKeyRight(const unsigned char *known_stream, int known_l
 		index1 = (index1 + 1) % key_len;  
 	} 
 
+	if(*found) asm("exit;");
+
 	//PRGA
 	index1=0, index2=0, counter=0; 
 	for (;counter<known_len;counter++)
@@ -74,6 +80,9 @@ __device__ bool device_isKeyRight(const unsigned char *known_stream, int known_l
 		if(known_stream[counter]!=rc4_single(&index1,&index2,state))
 			return false;
 	}
+
+	if(*found) asm("exit;");
+
 	return true;
 } 
 /**
