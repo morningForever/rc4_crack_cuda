@@ -18,7 +18,7 @@ __device__ unsigned char* genKey(unsigned char*res,unsigned long long val,int*ke
 	return res+p+1;
 }
 
-__global__ void crackRc4Kernel(const unsigned char* knownKeyStream, const int known_stream_len, unsigned char*key, volatile bool *found)
+__global__ void crackRc4Kernel(unsigned char*key, volatile bool *found)
 {
 	if(*found) asm("exit;");
 
@@ -40,7 +40,7 @@ __global__ void crackRc4Kernel(const unsigned char* knownKeyStream, const int kn
 		//找到的话退出
 		if(*found) asm("exit;");
 
-		justIt=device_isKeyRight(knownKeyStream,known_stream_len,vKey,keyLen,found);
+		justIt=device_isKeyRight(vKey,keyLen,found);
 
 		//找到的话退出
 		if(*found) asm("exit;");
@@ -59,9 +59,9 @@ __global__ void crackRc4Kernel(const unsigned char* knownKeyStream, const int kn
 }
 
 // Helper function for using CUDA to add vectors in parallel.
-cudaError_t crackRc4WithCuda(unsigned char* knownKeyStream, int stream_len, unsigned char*key, bool*found)
+cudaError_t crackRc4WithCuda(unsigned char* knownKeyStream_host, int knownStreamLen_host, unsigned char*key, bool*found)
 {
-	unsigned char *knownKeyStream_dev, *key_dev ;
+	unsigned char *key_dev ;
 	bool* found_dev;
 	cudaError_t cudaStatus;
 
@@ -76,13 +76,6 @@ cudaError_t crackRc4WithCuda(unsigned char* knownKeyStream, int stream_len, unsi
 	cudaDeviceProp prop;
 	cudaGetDeviceProperties(&prop, 0);
 
-	// Allocate GPU buffers for three vectors (two input, one output).
-	cudaStatus = cudaMalloc((void**)&knownKeyStream_dev, stream_len * sizeof(unsigned char));
-	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMalloc failed!");
-		goto Error;
-	}	
-
 	cudaStatus = cudaMalloc((void**)&key_dev, (MAX_KEY_LENGTH+1) * sizeof(unsigned char));
 	if (cudaStatus != cudaSuccess) {
 		fprintf(stderr, "cudaMalloc failed!");
@@ -94,17 +87,24 @@ cudaError_t crackRc4WithCuda(unsigned char* knownKeyStream, int stream_len, unsi
 		fprintf(stderr, "cudaMalloc failed!");
 		goto Error;
 	}
-	
-	// Copy input vectors from host memory to GPU buffers.
-	cudaStatus = cudaMemcpy(knownKeyStream_dev, knownKeyStream, stream_len * sizeof(unsigned char), cudaMemcpyHostToDevice);
+
+	//检验是否找到密钥变量
+	cudaStatus = cudaMemcpy(found_dev, found, sizeof(bool), cudaMemcpyHostToDevice);
 	if (cudaStatus != cudaSuccess) {
 		fprintf(stderr, "cudaMemcpy failed!");
 		goto Error;
 	}
 
-	cudaStatus = cudaMemcpy(found_dev, found, sizeof(bool), cudaMemcpyHostToDevice);
+	//复制常量内存
+	cudaStatus = cudaMemcpyToSymbol(knowStream_device, knownKeyStream_host,sizeof(unsigned char)*knownStreamLen_host);
 	if (cudaStatus != cudaSuccess) {
-		fprintf(stderr, "cudaMemcpy failed!");
+		fprintf(stderr, "cudaMemcpyToSymbol failed!");
+		goto Error;
+	}
+
+	cudaStatus = cudaMemcpyToSymbol((const void *)&knownStreamLen_device,(const void *)&knownStreamLen_host,sizeof(unsigned char));
+	if (cudaStatus != cudaSuccess) {
+		fprintf(stderr, "cudaMemcpyToSymbol failed!");
 		goto Error;
 	}
 
@@ -114,7 +114,7 @@ cudaError_t crackRc4WithCuda(unsigned char* knownKeyStream, int stream_len, unsi
 		threadNum=MAX_THREAD_NUM;
 		share_memory=threadNum*MEMEORY_PER_THREAD;
 	}
-	crackRc4Kernel<<<BLOCK_NUM, threadNum, share_memory>>>(knownKeyStream_dev, stream_len, key_dev,found_dev);
+	crackRc4Kernel<<<BLOCK_NUM, threadNum, share_memory>>>(key_dev,found_dev);
 
 	// Check for any errors launching the kernel
 	cudaStatus = cudaGetLastError();
@@ -146,7 +146,6 @@ cudaError_t crackRc4WithCuda(unsigned char* knownKeyStream, int stream_len, unsi
 	}
 
 Error:
-	cudaFree(knownKeyStream_dev);
 	cudaFree(key_dev);
 	cudaFree(found_dev);
 
@@ -158,7 +157,7 @@ int main(int argc, char *argv[])
 //	printf("%c",0x7d);
 	unsigned char* s_box = (unsigned char*)malloc(sizeof(unsigned char)*256);
 	//密钥
-	unsigned char encryptKey[]="!!}";
+	unsigned char encryptKey[]="!!!}";
 	//明文
 	unsigned char buffer[] = "Life is a chain of moments of enjoyment, not only about survivalO(∩_∩)O~";
 	int buffer_len=strlen((char*)buffer);
