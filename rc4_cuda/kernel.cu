@@ -6,15 +6,42 @@
 文和密文异或的话就能得到密钥流的某些位置的值。这样就可以省去不少空间~~
 */
 /************************************************************************/
+/** 
+ * \brief,to generate the candidate key 
+ **/
+__device__ bool generateKey(int startIndex)
+{
+	unsigned char currentkeyLen=shared_mem[startIndex+KEY_LEN_OFFSET],tempP=currentkeyLen;
+	if(currentkeyLen<MAX_KEY_LENGTH)
+	{
+		shared_mem[startIndex+currentkeyLen]++;
+		while(shared_mem[startIndex+tempP]>END_CHARACTER&&tempP>0)
+		{
+			shared_mem[startIndex+tempP]=START_CHARACTER;
+			tempP--;
+			shared_mem[startIndex+tempP]++;
+		}
+		if(shared_mem[startIndex]>END_CHARACTER)
+		{
+			currentkeyLen++;
+			shared_mem[startIndex]=START_CHARACTER;
+			shared_mem[startIndex+currentkeyLen]=START_CHARACTER;
+		}
+		shared_mem[startIndex+KEY_LEN_OFFSET]=currentkeyLen;
+		shared_mem[startIndex+currentkeyLen+1]='\0';
+		return true;
+	}
+	return false;
+}
 
 __device__ unsigned char* genKey(unsigned char*res,unsigned long long val,int*key_len)
 {
-	char p=maxKeyLen-1;
+	char p=MAX_KEY_LENGTH-1;
 	while (val&&p>=0) {
-		res[p--] = (val - 1) % keyNum + start;
-		val = (val - 1) / keyNum;
+		res[p--] = (val - 1) % KEY + START_CHARACTER;
+		val = (val - 1) / KEY;
 	}
-	*key_len=(maxKeyLen-p-1);
+	*key_len=(MAX_KEY_LENGTH-p-1);
 	return res+p+1;
 }
 
@@ -23,38 +50,51 @@ __global__ void crackRc4Kernel(unsigned char*key, volatile bool *found)
 	if(*found) asm("exit;");
 
 	int bdx=blockIdx.x, tid=threadIdx.x, keyLen=0;
-	const unsigned long long totalThreadNum=gridDim.x*blockDim.x;
-	const unsigned long long keyNum_per_thread=maxNum/totalThreadNum;
-//	unsigned long long val=(tid+bdx*blockDim.x)*keyNum_per_thread;
-	unsigned long long val=(tid+bdx*blockDim.x);
+
+	const unsigned long long cycleNum=maxNum/(gridDim.x*blockDim.x*OPERATE_KEY_PER_THREAD);
+
+	unsigned long long startPoint;
 	bool justIt=true;
-	for (unsigned long long i=0; i<=keyNum_per_thread; val+=totalThreadNum,i++)
+
+	unsigned char tempArray[MAX_KEY_LENGTH+1];
+	unsigned char * vKey;
+
+	for (unsigned long long i=0;i<=cycleNum&startPoint<maxNum;i++)
 	{
-		//找到的话退出
-		if(*found) asm("exit;");
-		if(val==0) continue;
-
-		//vKey是share_memory的一个指针
-		unsigned char*vKey=genKey((shared_mem+memory_per_thread*tid),val,&keyLen);
-
-		//找到的话退出
 		if(*found) asm("exit;");
 
-		justIt=device_isKeyRight(vKey,keyLen,found);
+		startPoint=i*(gridDim.x*blockDim.x*OPERATE_KEY_PER_THREAD);
+		if(startPoint==0) startPoint=1;
+		vKey=genKey(tempArray,startPoint,&keyLen);
+		memcpy((shared_mem+MEMEORY_PER_THREAD*tid),vKey,keyLen);
+		keyLen--;
+		shared_mem[MEMEORY_PER_THREAD*tid+KEY_LEN_OFFSET]=keyLen;
+		for (int j=0;j<OPERATE_KEY_PER_THREAD;j++)
+		{
+			if(*found) asm("exit;");
+			if(j!=0) generateKey(MEMEORY_PER_THREAD*tid);
 
-		//找到的话退出
-		if(*found) asm("exit;");
+			keyLen=shared_mem[MEMEORY_PER_THREAD*tid+KEY_LEN_OFFSET];
+			vKey=shared_mem+MEMEORY_PER_THREAD*tid;
 
-		//当前密钥不是所求
-		if (!justIt) continue;
+			if(*found) asm("exit;");
 
-		//找到匹配密钥，写到Host，保存数据,修改found,退出程序
-		*found=true;
-		memcpy(key,vKey,keyLen);
-		key[keyLen]=0;
-		__threadfence();
-		asm("exit;");
-		break;
+			justIt=device_isKeyRight(vKey,keyLen+1,found);
+
+			//当前密钥不是所求
+			if (!justIt) continue;
+
+			//找到的话退出
+			if(*found) asm("exit;");
+
+			//找到匹配密钥，写到Host，保存数据,修改found,退出程序
+			*found=true;
+			memcpy(key,vKey,keyLen+1);
+			key[keyLen+1]=0;
+			__threadfence();
+			asm("exit;");
+			break;
+		}		
 	}
 }
 
@@ -157,7 +197,7 @@ int main(int argc, char *argv[])
 //	printf("%c",0x7d);
 	unsigned char* s_box = (unsigned char*)malloc(sizeof(unsigned char)*256);
 	//密钥
-	unsigned char encryptKey[]="!!!}";
+	unsigned char encryptKey[]="!}";
 	//明文
 	unsigned char buffer[] = "Life is a chain of moments of enjoyment, not only about survivalO(∩_∩)O~";
 	int buffer_len=strlen((char*)buffer);

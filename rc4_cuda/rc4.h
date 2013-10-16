@@ -11,25 +11,22 @@
 //21-7E,totally 94 characters
 #define START_CHARACTER 0x21
 #define END_CHARACTER 0x7E
-#define KEY (END_CHARACTER-START_CHARACTER+1)
+#define KEY 94
 
-#define BLOCK_NUM 2
-#define MAX_THREAD_NUM 256
+#define BLOCK_NUM 1
+#define MAX_THREAD_NUM 512
 
 //空间其实只要10个就足够了，取20的原因主要是为了避免bank conflicts
 #define MEMEORY_PER_THREAD 20
 #define MAX_KEY_LENGTH 10 //max key length
 #define STATE_LEN	256
 #define MAX_KNOWN_STREAM_LEN 4
+#define KEY_LEN_OFFSET 18
+#define OPERATE_KEY_PER_THREAD 256
 
 __constant__ unsigned long long maxNum=0xFFFFFFFFFFFFFFFF;
-__constant__ unsigned int maxKeyLen=MAX_KEY_LENGTH;
-__constant__ unsigned int keyNum=KEY;
-__constant__ unsigned int start=START_CHARACTER;
-__constant__ unsigned int memory_per_thread=MEMEORY_PER_THREAD;
 __constant__ unsigned char knownStreamLen_device;
 __constant__ unsigned char knowStream_device[MAX_KNOWN_STREAM_LEN];
-
 
 extern __shared__ unsigned char shared_mem[];
 
